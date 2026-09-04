@@ -1,0 +1,56 @@
+xray_bin: xray
+sub_urls:
+  - https://example.com/sub1
+sub_refresh: 300s
+
+http_check:
+  url: https://www.gstatic.com/generate_204
+  method: GET
+  expect_status: [204, 200]
+  expect_response: ""
+  timeout: 5s
+
+database: x-tester.db
+
+grouping:
+  enabled: true
+  url: https://ifconfig.io/country_code
+
+filter_country:
+  - US
+  - DE
+  - NL
+
+balancer: hash_username # hash_username | hash_ip | in_port
+
+listen:
+  mode: socks5 # socks5 | http | direct
+  password: "change-me"
+  host: 127.0.0.1
+  port: 1080 # or "1080-1090"
+  # unix: "@/x-tester.sock" # if set, host/port ignored
+  # When true, each TCP conn must start with PROXY v1/v2 (e.g. HAProxy / Xray Freedom).
+  # hash_ip sticks on the PROXY source IP. For mode=direct + Freedom redirect,
+  # destination falls back to HTTP Host / TLS SNI when PROXY dest is this listen addr.
+  accept_proxy_protocol: false
+
+probe:
+  interval: 90s           # fallback
+  interval_failed: 90s    # recheck failed nodes
+  interval_active: 300s   # recheck healthy nodes
+  concurrency: 10
+  delay: 1s
+  mount_batch: 10
+  # Stop filling once this many are active (0 = unlimited). Recheck actives still runs;
+  # when count drops, failed/pending probes resume to replace.
+  max_active: 0
+  # Extra healthy nodes kept ready (not mounted). On active drop → instant promote.
+  # Only used when max_active > 0. 0 = disabled.
+  standby: 0
+  # If an active is slower than the best active by more than this, evict it (failed, not standby).
+  # 0 = disabled. Example: 80ms
+  latency_tolerance: 0
+
+stats:
+  host: 127.0.0.1
+  port: 9090
