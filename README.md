@@ -22,7 +22,25 @@ cp config.example.yaml config.yaml
 کراس‌بیلد Linux:
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o bin/x-tester-linux ./cmd/x-tester/
+./scripts/build-linux.sh                 # amd64 static
+GOARCH=arm64 ./scripts/build-linux.sh    # arm64 static
+```
+
+### Release (GitHub Actions)
+
+ورکفلو `.github/workflows/release.yml` بعد از پوش باینری می‌سازد و روی GitHub Release می‌گذارد:
+
+| تریگر | خروجی |
+|--------|--------|
+| پوش به `main` / `master` | ریلیز rolling با تگ `latest` (prerelease) |
+| پوش تگ `v*` | ریلیز نسخه‌دار (مثلاً `v1.0.0`) |
+| Run workflow دستی | اختیاری با نام تگ دلخواه |
+
+هدف‌ها: `linux-amd64` · `linux-arm64` · `darwin-amd64` · `darwin-arm64` (+ `.sha256` / `SHA256SUMS`)
+
+```bash
+git push origin main          # → Release "latest"
+git tag v1.0.0 && git push origin v1.0.0   # → Release v1.0.0
 ```
 
 ## معماری خلاصه

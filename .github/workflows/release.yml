@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag/name for release (empty = latest on branch, or v* on tag push)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build-${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          out="x-tester-${GOOS}-${GOARCH}"
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o "dist/${out}" ./cmd/x-tester/
+          (
+            cd dist
+            sha256sum "${out}" > "${out}.sha256"
+          )
+          ls -lh dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: x-tester-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/x-tester-${{ matrix.goos }}-${{ matrix.goarch }}
+            dist/x-tester-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: publish-release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find artifacts -type f \( -name 'x-tester-*' -o -name '*.sha256' \) -exec cp -v {} dist/ \;
+          ls -lah dist/
+          cat dist/*.sha256 > dist/SHA256SUMS
+          cat dist/SHA256SUMS
+
+      - name: Resolve release meta
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            tag="${{ inputs.tag }}"
+            prerelease=false
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+            prerelease=false
+          else
+            # branch push → rolling latest
+            tag="latest"
+            prerelease=true
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+          echo "name=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          draft: false
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          generate_release_notes: true
+          make_latest: ${{ steps.meta.outputs.prerelease == 'false' }}
+          files: |
+            dist/x-tester-linux-amd64
+            dist/x-tester-linux-amd64.sha256
+            dist/x-tester-linux-arm64
+            dist/x-tester-linux-arm64.sha256
+            dist/x-tester-darwin-amd64
+            dist/x-tester-darwin-amd64.sha256
+            dist/x-tester-darwin-arm64
+            dist/x-tester-darwin-arm64.sha256
+            dist/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
