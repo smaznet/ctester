@@ -9,6 +9,10 @@ http_check:
   expect_status: [204, 200]
   expect_response: ""
   timeout: 5s
+  # Optional headers on probe (and geo) requests:
+  # headers:
+  #   User-Agent: "x-tester/1.0"
+  #   Authorization: "Bearer xxx"
 
 database: x-tester.db
 

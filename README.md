@@ -63,7 +63,7 @@ git tag v1.0.0 && git push origin v1.0.0   # → Release v1.0.0
 | `xray_bin` | مسیر/نام باینری Xray |
 | `sub_urls` | لینک‌های ساب |
 | `sub_refresh` | فاصلهٔ refresh ساب |
-| `http_check` | چک سلامت (URL، status، timeout) |
+| `http_check` | چک سلامت (URL، status، timeout، headers اختیاری) |
 | `database` | مسیر SQLite (نسبت به پوشهٔ فایل کانفیگ یا مطلق) |
 | `grouping` | تشخیص کشور (`ifconfig.io/country_code`) |
 | `filter_country` | فقط این کد کشورها active؛ بقیه ignore و دیگر تست نمی‌شوند |

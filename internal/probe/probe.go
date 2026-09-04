@@ -19,22 +19,22 @@ import (
 )
 
 type Result struct {
-	Node     sub.Node
-	OK       bool
-	Ignored  bool // country filtered — do not retest
-	Country  string
-	ExitIP   string
-	Latency  time.Duration
-	Local    *xray.NodeLocal
-	Error    string
+	Node    sub.Node
+	OK      bool
+	Ignored bool // country filtered — do not retest
+	Country string
+	ExitIP  string
+	Latency time.Duration
+	Local   *xray.NodeLocal
+	Error   string
 }
 
 type Checker struct {
-	Probe     *xray.Instance
-	Check     config.HTTPCheck
-	Timeout   time.Duration
-	NeedGeo   bool
-	GeoURL    string
+	Probe        *xray.Instance
+	Check        config.HTTPCheck
+	Timeout      time.Duration
+	NeedGeo      bool
+	GeoURL       string
 	AllowCountry func(code string) bool
 }
 
@@ -63,7 +63,7 @@ func (c *Checker) CheckNode(ctx context.Context, node sub.Node) Result {
 		if geoURL == "" {
 			geoURL = "https://ifconfig.io/country_code"
 		}
-		info, err := geoThroughSocks(ctx, local.LocalPort, geoURL, c.Timeout)
+		info, err := geoThroughSocks(ctx, local.LocalPort, geoURL, c.Timeout, c.Check.Headers)
 		if err != nil {
 			return Result{Node: node, OK: false, Latency: time.Since(start), Error: "geo: " + err.Error()}
 		}
@@ -74,13 +74,13 @@ func (c *Checker) CheckNode(ctx context.Context, node sub.Node) Result {
 		}
 		if c.AllowCountry != nil && !c.AllowCountry(country) {
 			return Result{
-				Node:     node,
-				OK:       false,
-				Ignored:  true,
-				Country:  country,
-				ExitIP:   exitIP,
-				Latency:  time.Since(start),
-				Error:    "country filtered: " + country,
+				Node:    node,
+				OK:      false,
+				Ignored: true,
+				Country: country,
+				ExitIP:  exitIP,
+				Latency: time.Since(start),
+				Error:   "country filtered: " + country,
 			}
 		}
 	}
@@ -99,7 +99,7 @@ type geoInfo struct {
 	IP      string
 }
 
-func geoThroughSocks(ctx context.Context, socksPort int, geoURL string, timeout time.Duration) (geoInfo, error) {
+func geoThroughSocks(ctx context.Context, socksPort int, geoURL string, timeout time.Duration, headers map[string]string) (geoInfo, error) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
@@ -108,6 +108,7 @@ func geoThroughSocks(ctx context.Context, socksPort int, geoURL string, timeout 
 		Method:       http.MethodGet,
 		ExpectStatus: []int{200},
 		Timeout:      config.Duration(timeout),
+		Headers:      headers,
 	}
 	body, err := httpBodyThroughSocks(ctx, socksPort, check)
 	if err != nil {
@@ -177,6 +178,12 @@ func httpBodyThroughSocks(ctx context.Context, socksPort int, check config.HTTPC
 	req, err := http.NewRequestWithContext(ctx, method, check.URL, nil)
 	if err != nil {
 		return nil, err
+	}
+	for k, v := range check.Headers {
+		if k == "" {
+			continue
+		}
+		req.Header.Set(k, v)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

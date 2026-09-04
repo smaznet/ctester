@@ -35,6 +35,8 @@ type HTTPCheck struct {
 	ExpectStatus   []int    `yaml:"expect_status"`
 	ExpectResponse string   `yaml:"expect_response"`
 	Timeout        Duration `yaml:"timeout"`
+	// Headers are optional extra HTTP headers on probe requests (connectivity + geo).
+	Headers map[string]string `yaml:"headers"`
 }
 
 type Listen struct {
