@@ -11,9 +11,16 @@ mkdir -p "$(dirname "$OUT")"
 
 echo "building static linux/${ARCH} → ${OUT}"
 
+VER="${VERSION:-dev}"
+COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || true)}"
+LDFLAGS="-s -w -X github.com/aria/x-tester/internal/version.Version=${VER}"
+if [ -n "${COMMIT}" ]; then
+  LDFLAGS="${LDFLAGS} -X github.com/aria/x-tester/internal/version.Commit=${COMMIT}"
+fi
+
 CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build \
   -trimpath \
-  -ldflags="-s -w" \
+  -ldflags="${LDFLAGS}" \
   -o "${OUT}" \
   ./cmd/x-tester/
 

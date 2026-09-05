@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/aria/x-tester/internal/tui"
 	"github.com/aria/x-tester/internal/xray"
 	"github.com/fsnotify/fsnotify"
+	"github.com/mattn/go-isatty"
 )
 
 type App struct {
@@ -57,7 +59,13 @@ func Run(configPath string) error {
 		return err
 	}
 	logs := logbuf.New(200)
-	logger := log.New(logs, "", 0)
+	headless := !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd())
+	var logOut io.Writer = logs
+	if headless {
+		// journald / systemd: mirror ring into stdout
+		logOut = io.MultiWriter(logs, os.Stdout)
+	}
+	logger := log.New(logOut, "", 0)
 	met := metrics.New()
 	act := activity.New()
 
@@ -110,6 +118,7 @@ func Run(configPath string) error {
 	defer a.stopXray()
 
 	a.stats = stats.New(cfg.Stats, a.bal)
+	a.stats.SetDashboard(a.dashboard)
 	if err := a.stats.Start(); err != nil {
 		return err
 	}
@@ -127,6 +136,13 @@ func Run(configPath string) error {
 
 	a.log.Printf("listening mode=%s accept_proxy_protocol=%v balancer=%s stats=%s:%d",
 		cfg.Listen.Mode, cfg.Listen.AcceptProxyProtocol, cfg.Balancer, cfg.Stats.Host, cfg.Stats.Port)
+
+	if headless {
+		a.log.Printf("headless mode (no tty) — waiting for signal")
+		<-ctx.Done()
+		a.log.Printf("shutting down")
+		return nil
+	}
 
 	prog := tui.New(a.tuiStatus, logs)
 	// bubbletea handles ctrl+c; also stop app when TUI quits
@@ -178,7 +194,6 @@ func (a *App) tuiStatus() tui.Status {
 			listenAddr = net.JoinHostPort(cfg.Listen.Host, strconv.Itoa(cfg.Listen.Port.Start))
 		}
 	}
-	groups := a.bal.CountryGroups()
 	return tui.Status{
 		Mode:       cfg.Listen.Mode,
 		Balancer:   cfg.Balancer,
@@ -190,12 +205,34 @@ func (a *App) tuiStatus() tui.Status {
 		Failed:     counts.Failed,
 		Ignored:    counts.Ignored,
 		Pending:    counts.Pending,
-		Countries:  groups,
+		Countries:  a.bal.CountryGroups(),
 		Filter:     append([]string{}, cfg.FilterCountry...),
 		Traffic:    a.met.Snapshot(),
 		Nodes:      sorted,
 		Logs:       a.logs.Lines(16),
 		Activity:   a.act.Snapshot(),
+	}
+}
+
+func (a *App) dashboard() stats.Dashboard {
+	st := a.tuiStatus()
+	return stats.Dashboard{
+		Mode:      st.Mode,
+		Balancer:  st.Balancer,
+		Listen:    st.Listen,
+		StatsAddr: st.StatsAddr,
+		Count:     st.TotalNodes,
+		Active:    st.Active,
+		Standby:   st.Standby,
+		Failed:    st.Failed,
+		Ignored:   st.Ignored,
+		Pending:   st.Pending,
+		Countries: st.Countries,
+		Filter:    st.Filter,
+		Traffic:   stats.TrafficFromMetrics(st.Traffic),
+		Activity:  stats.ActivityFromTracker(st.Activity),
+		Logs:      st.Logs,
+		Nodes:     stats.NodesFromBalancer(st.Nodes),
 	}
 }
 

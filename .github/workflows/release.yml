@@ -50,7 +50,12 @@ jobs:
           set -euo pipefail
           out="x-tester-${GOOS}-${GOARCH}"
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o "dist/${out}" ./cmd/x-tester/
+          ver="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            ver="latest"
+          fi
+          ldflags="-s -w -X github.com/aria/x-tester/internal/version.Version=${ver} -X github.com/aria/x-tester/internal/version.Commit=${GITHUB_SHA::7}"
+          go build -trimpath -ldflags="${ldflags}" -o "dist/${out}" ./cmd/x-tester/
           (
             cd dist
             sha256sum "${out}" > "${out}.sha256"

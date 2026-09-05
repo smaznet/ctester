@@ -34,6 +34,7 @@ type Status struct {
 	Nodes      []balancer.NodeState
 	Logs       []string
 	Activity   activity.Snapshot
+	Remote     bool // true when attached via `x-tester monitor`
 }
 
 type model struct {
@@ -135,7 +136,11 @@ func (m model) View() string {
 	}
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("x-tester")+"  "+mutedStyle.Render("fixed tui · q quit"))
+	hint := "fixed tui · q quit"
+	if d.Remote {
+		hint = "monitor · q quit"
+	}
+	lines = append(lines, titleStyle.Render("x-tester")+"  "+mutedStyle.Render(hint))
 	lines = append(lines, fmt.Sprintf("%s %s  %s %s  %s %s",
 		labelStyle.Render("mode"), valStyle.Render(clip(d.Mode, 10)),
 		labelStyle.Render("bal"), valStyle.Render(clip(d.Balancer, 16)),
