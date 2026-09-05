@@ -34,7 +34,11 @@ type HTTPCheck struct {
 	Method         string   `yaml:"method"`
 	ExpectStatus   []int    `yaml:"expect_status"`
 	ExpectResponse string   `yaml:"expect_response"`
-	Timeout        Duration `yaml:"timeout"`
+	// ExpectHeaders: each response header must contain the given substring (case-sensitive value match).
+	// Header names are matched case-insensitively. Empty map = no header checks.
+	// Example: Location: "accounts.google" → OK if Location contains that word.
+	ExpectHeaders map[string]string `yaml:"expect_headers"`
+	Timeout       Duration          `yaml:"timeout"`
 	// Headers are optional extra HTTP headers on probe requests (connectivity + geo).
 	Headers map[string]string `yaml:"headers"`
 }

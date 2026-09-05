@@ -197,7 +197,27 @@ func httpBodyThroughSocks(ctx context.Context, socksPort int, check config.HTTPC
 	if check.ExpectResponse != "" && !strings.Contains(string(body), check.ExpectResponse) {
 		return nil, fmt.Errorf("response mismatch")
 	}
+	if err := headersOK(resp.Header, check.ExpectHeaders); err != nil {
+		return nil, err
+	}
 	return body, nil
+}
+
+// headersOK checks that each expected header value contains the given substring.
+func headersOK(h http.Header, expect map[string]string) error {
+	for name, want := range expect {
+		if name == "" || want == "" {
+			continue
+		}
+		got := h.Get(name)
+		if got == "" {
+			return fmt.Errorf("header %q missing", name)
+		}
+		if !strings.Contains(got, want) {
+			return fmt.Errorf("header %q mismatch", name)
+		}
+	}
+	return nil
 }
 
 func statusOK(code int, expect []int) bool {
