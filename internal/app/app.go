@@ -102,12 +102,9 @@ func Run(configPath string) error {
 	logger.Printf("database %s (ignored=%d active=%d failed=%d)",
 		db.Path(), db.CountIgnored(), db.CountByStatus(store.StatusActive), db.CountByStatus(store.StatusFailed))
 
-	// If filter now allows a previously ignored country, drop those rows
-	if n, err := db.UnignoreIfAllowed(cfg.CountryAllowed); err != nil {
-		logger.Printf("db unignore: %v", err)
-	} else if n > 0 {
-		logger.Printf("unignored %d nodes now allowed by filter_country", n)
-	}
+	// Re-apply filter_country against persisted countries (widen → unignore+reprobe;
+	// narrow → demote actives that are no longer allowed).
+	a.applyCountryFilter()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -304,13 +301,7 @@ func (a *App) reloadConfig() {
 	a.bal.SetMode(cfg.Balancer)
 	a.mu.Unlock()
 
-	if a.db != nil {
-		if n, err := a.db.UnignoreIfAllowed(cfg.CountryAllowed); err != nil {
-			a.log.Printf("db unignore on reload: %v", err)
-		} else if n > 0 {
-			a.log.Printf("reload: unignored %d nodes now in filter_country", n)
-		}
-	}
+	a.applyCountryFilter()
 
 	needListenRestart := old.Listen != cfg.Listen
 	if needListenRestart {
@@ -322,6 +313,75 @@ func (a *App) reloadConfig() {
 		}
 	}
 	a.log.Printf("config reloaded")
+}
+
+// applyCountryFilter syncs SQLite + balancer with the current filter_country.
+// Widening unignores matching countries and clears last_check so they probe immediately.
+// Narrowing demotes known-country actives that are no longer allowed.
+func (a *App) applyCountryFilter() {
+	if a.db == nil || a.cfg == nil {
+		return
+	}
+	allow := a.cfg.CountryAllowed
+
+	if n, err := a.db.UnignoreIfAllowed(allow); err != nil {
+		a.log.Printf("db unignore: %v", err)
+	} else if n > 0 {
+		a.log.Printf("unignored %d nodes now allowed by filter_country", n)
+	}
+
+	if n, err := a.db.IgnoreIfDisallowed(allow); err != nil {
+		a.log.Printf("db ignore filter: %v", err)
+	} else if n > 0 {
+		a.log.Printf("ignored %d nodes no longer allowed by filter_country", n)
+	}
+
+	// Cold start: balancer empty — remount path reads DB. Hot reload: sync memory.
+	for _, st := range a.bal.Snapshot() {
+		dbSt, ok := a.db.Get(st.ID)
+		if !ok {
+			continue
+		}
+		switch {
+		case dbSt.Status == store.StatusIgnored && !st.Ignored:
+			a.forceCountryIgnored(st.ID, dbSt.Country)
+		case dbSt.Status != store.StatusIgnored && st.Ignored:
+			a.bal.Upsert(balancer.NodeState{
+				ID: st.ID, Name: st.Name, SubURL: st.SubURL, Address: st.Address,
+				Country: dbSt.Country, ExitIP: dbSt.ExitIP,
+				Ignored: false, LastCheck: time.Time{},
+			})
+		}
+	}
+}
+
+// forceCountryIgnored unmounts and marks balancer ignored (DB already updated).
+func (a *App) forceCountryIgnored(id, country string) {
+	a.dropStandby(id)
+	a.mu.Lock()
+	if local, ok := a.mounted[id]; ok {
+		delete(a.mounted, id)
+		mainInst := a.main
+		a.mu.Unlock()
+		if mainInst != nil {
+			_ = mainInst.RemoveNode(context.Background(), local.OutboundTag, local.InboundTag)
+		}
+	} else {
+		a.mu.Unlock()
+	}
+	prev, _ := a.bal.Get(id)
+	name, addr, subURL := prev.Name, prev.Address, prev.SubURL
+	a.mu.Lock()
+	if n, ok := a.nodes[id]; ok {
+		name = n.Name
+		addr = n.AddressPort()
+		subURL = n.SubURL
+	}
+	a.mu.Unlock()
+	a.bal.Upsert(balancer.NodeState{
+		ID: id, Name: name, SubURL: subURL, Address: addr,
+		Ignored: true, Country: country, LastCheck: time.Now(),
+	})
 }
 
 func (a *App) loopSub(ctx context.Context) {
@@ -410,6 +470,10 @@ func (a *App) refreshSubs(ctx context.Context) {
 		a.act.Set("resuming", fmt.Sprintf("remount %d active from db", len(toRemount)))
 		a.log.Printf("resuming %d previously active nodes from database", len(toRemount))
 		for _, item := range toRemount {
+			if item.st.Country != "" && !a.cfg.CountryAllowed(item.st.Country) {
+				a.log.Printf("skip resume %s: country %s not in filter_country", item.node.AddressPort(), item.st.Country)
+				continue
+			}
 			r := probe.Result{
 				Node:    item.node,
 				OK:      true,

@@ -281,7 +281,9 @@ func (d *DB) MarkIgnored(n IgnoredNode) error {
 }
 
 func (d *DB) Unignore(id string) error {
-	_, err := d.sql.Exec(`UPDATE node_states SET status=?, updated_at=? WHERE id=? AND status=?`,
+	// Clear last_check so the node is immediately due for probe (otherwise
+	// interval_failed keeps the old filter effective after filter_country changes).
+	_, err := d.sql.Exec(`UPDATE node_states SET status=?, last_check=0, reason='', updated_at=? WHERE id=? AND status=?`,
 		StatusPending, time.Now().Unix(), id, StatusIgnored)
 	if err != nil {
 		return err
@@ -290,6 +292,8 @@ func (d *DB) Unignore(id string) error {
 	d.mu.Lock()
 	if n, ok := d.cache[id]; ok {
 		n.Status = StatusPending
+		n.LastCheck = time.Time{}
+		n.Reason = ""
 		d.cache[id] = n
 	}
 	d.mu.Unlock()
@@ -314,6 +318,34 @@ func (d *DB) UnignoreIfAllowed(allow func(code string) bool) (int, error) {
 		}
 	}
 	return len(remove), nil
+}
+
+// IgnoreIfDisallowed marks nodes whose stored country is no longer in filter_country.
+func (d *DB) IgnoreIfDisallowed(allow func(code string) bool) (int, error) {
+	if allow == nil {
+		return 0, nil
+	}
+	d.mu.RLock()
+	var list []NodeState
+	for _, n := range d.cache {
+		if n.Status == StatusIgnored || n.Country == "" {
+			continue
+		}
+		if !allow(n.Country) {
+			list = append(list, n)
+		}
+	}
+	d.mu.RUnlock()
+	now := time.Now()
+	for _, n := range list {
+		n.Status = StatusIgnored
+		n.Reason = "country filtered: " + n.Country
+		n.LastCheck = now
+		if err := d.Save(n); err != nil {
+			return 0, err
+		}
+	}
+	return len(list), nil
 }
 
 // ListByStatus returns cached states with the given status.

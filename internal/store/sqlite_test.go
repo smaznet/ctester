@@ -75,3 +75,54 @@ func TestIgnoredPersist(t *testing.T) {
 		t.Fatal("expected ignored after reopen")
 	}
 }
+
+func TestUnignoreClearsLastCheck(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	past := time.Now().Add(-time.Hour)
+	if err := db.MarkIgnored(store.IgnoredNode{
+		ID: "de1", Address: "1.1.1.1:443", Name: "de", Country: "DE", Reason: "filtered", At: past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := db.UnignoreIfAllowed(func(code string) bool { return code == "DE" })
+	if err != nil || n != 1 {
+		t.Fatalf("unignore: n=%d err=%v", n, err)
+	}
+	st, ok := db.Get("de1")
+	if !ok || st.Status != store.StatusPending {
+		t.Fatalf("status: %+v", st)
+	}
+	if !st.LastCheck.IsZero() {
+		t.Fatalf("last_check should be cleared, got %v", st.LastCheck)
+	}
+}
+
+func TestIgnoreIfDisallowed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.Save(store.NodeState{
+		ID: "us1", Address: "2.2.2.2:443", Name: "us", Status: store.StatusActive, Country: "US",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := db.IgnoreIfDisallowed(func(code string) bool { return code == "DE" })
+	if err != nil || n != 1 {
+		t.Fatalf("ignore: n=%d err=%v", n, err)
+	}
+	if !db.IsIgnored("us1") {
+		t.Fatal("expected US active to become ignored")
+	}
+}
